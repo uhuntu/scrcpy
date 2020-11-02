@@ -5,6 +5,8 @@
 #include <SDL2/SDL.h>
 #include <libavformat/avformat.h>
 
+#include <GLFW/glfw3.h>
+
 #include "config.h"
 #include "common.h"
 #include "opengl.h"
@@ -12,7 +14,7 @@
 struct video_buffer;
 
 struct screen {
-    SDL_Window *window;
+    GLFWwindow *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
     bool use_opengl;
@@ -90,9 +92,7 @@ screen_show_window(struct screen *screen);
 void
 screen_destroy(struct screen *screen);
 
-// resize if necessary and write the rendered frame into the texture
-bool
-screen_update_frame(struct screen *screen, struct video_buffer *vb);
+
 
 // render the texture to the renderer
 //

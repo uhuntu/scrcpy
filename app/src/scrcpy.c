@@ -7,6 +7,8 @@
 #include <sys/time.h>
 #include <SDL2/SDL.h>
 
+#include <GLFW/glfw3.h>
+
 #ifdef _WIN32
 // not needed here, but winsock2.h must never be included AFTER windows.h
 # include <winsock2.h>
@@ -70,17 +72,19 @@ BOOL WINAPI windows_ctrl_handler(DWORD ctrl_type) {
 }
 #endif // _WIN32
 
-// init SDL and set appropriate hints
+// init GLFW and set appropriate hints
 static bool
-sdl_init_and_configure(bool display, const char *render_driver,
+glfw_init_and_configure(bool display, const char *render_driver,
                        bool disable_screensaver) {
-    uint32_t flags = display ? SDL_INIT_VIDEO : SDL_INIT_EVENTS;
-    if (SDL_Init(flags)) {
-        LOGC("Could not initialize SDL: %s", SDL_GetError());
+    const char* description;
+
+    if (!glfwInit()) {
+        glfwGetError(&description);
+        LOGC("Could not initialize GLFW: %s", description);
         return false;
     }
 
-    atexit(SDL_Quit);
+    atexit(glfwTerminate);
 
 #ifdef _WIN32
     // Clean up properly on Ctrl+C on Windows
@@ -92,42 +96,6 @@ sdl_init_and_configure(bool display, const char *render_driver,
 
     if (!display) {
         return true;
-    }
-
-    if (render_driver && !SDL_SetHint(SDL_HINT_RENDER_DRIVER, render_driver)) {
-        LOGW("Could not set render driver");
-    }
-
-    // Linear filtering
-    if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1")) {
-        LOGW("Could not enable linear filtering");
-    }
-
-#ifdef SCRCPY_SDL_HAS_HINT_MOUSE_FOCUS_CLICKTHROUGH
-    // Handle a click to gain focus as any other click
-    if (!SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1")) {
-        LOGW("Could not enable mouse focus clickthrough");
-    }
-#endif
-
-#ifdef SCRCPY_SDL_HAS_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR
-    // Disable compositor bypassing on X11
-    if (!SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0")) {
-        LOGW("Could not disable X11 compositor bypass");
-    }
-#endif
-
-    // Do not minimize on focus loss
-    if (!SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0")) {
-        LOGW("Could not disable minimize on focus loss");
-    }
-
-    if (disable_screensaver) {
-        LOGD("Screensaver disabled");
-        SDL_DisableScreenSaver();
-    } else {
-        LOGD("Screensaver enabled");
-        SDL_EnableScreenSaver();
     }
 
     return true;
@@ -183,9 +151,6 @@ handle_event(SDL_Event *event, const struct scrcpy_options *options) {
                 screen.has_frame = true;
                 // this is the very first frame, show the window
                 screen_show_window(&screen);
-            }
-            if (!screen_update_frame(&screen, &video_buffer)) {
-                return EVENT_RESULT_CONTINUE;
             }
             break;
         case SDL_WINDOWEVENT:
@@ -334,7 +299,7 @@ scrcpy(const struct scrcpy_options *options) {
     bool controller_initialized = false;
     bool controller_started = false;
 
-    if (!sdl_init_and_configure(options->display, options->render_driver,
+    if (!glfw_init_and_configure(options->display, options->render_driver,
                                 options->disable_screensaver)) {
         goto end;
     }

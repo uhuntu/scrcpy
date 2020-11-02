@@ -4,6 +4,8 @@
 #include <string.h>
 #include <SDL2/SDL.h>
 
+#include <GLFW/glfw3.h>
+
 #include "config.h"
 #include "common.h"
 #include "compat.h"
@@ -54,6 +56,9 @@ set_window_size(struct screen *screen, struct size new_size) {
 static bool
 get_preferred_display_bounds(struct size *bounds) {
     SDL_Rect rect;
+
+    // GLFWmonitor** monitors;
+
 #ifdef SCRCPY_SDL_HAS_GET_DISPLAY_USABLE_BOUNDS
 # define GET_DISPLAY_BOUNDS(i, r) SDL_GetDisplayUsableBounds((i), (r))
 #else
@@ -66,6 +71,7 @@ get_preferred_display_bounds(struct size *bounds) {
 
     bounds->width = MAX(0, rect.w - DISPLAY_MARGINS);
     bounds->height = MAX(0, rect.h - DISPLAY_MARGINS);
+
     return true;
 }
 
@@ -199,33 +205,6 @@ screen_init(struct screen *screen) {
     *screen = (struct screen) SCREEN_INITIALIZER;
 }
 
-static inline SDL_Texture *
-create_texture(struct screen *screen) {
-    SDL_Renderer *renderer = screen->renderer;
-    struct size size = screen->frame_size;
-    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_YV12,
-                                             SDL_TEXTUREACCESS_STREAMING,
-                                             size.width, size.height);
-    if (!texture) {
-        return NULL;
-    }
-
-    if (screen->mipmaps) {
-        struct sc_opengl *gl = &screen->gl;
-
-        SDL_GL_BindTexture(texture, NULL, NULL);
-
-        // Enable trilinear filtering for downscaling
-        gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                          GL_LINEAR_MIPMAP_LINEAR);
-        gl->TexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, -1.f);
-
-        SDL_GL_UnbindTexture(texture);
-    }
-
-    return texture;
-}
-
 bool
 screen_init_rendering(struct screen *screen, const char *window_title,
                       struct size frame_size, bool always_on_top,
@@ -262,76 +241,15 @@ screen_init_rendering(struct screen *screen, const char *window_title,
           ? window_x : (int) SDL_WINDOWPOS_UNDEFINED;
     int y = window_y != SC_WINDOW_POSITION_UNDEFINED
           ? window_y : (int) SDL_WINDOWPOS_UNDEFINED;
-    screen->window = SDL_CreateWindow(window_title, x, y,
-                                      window_size.width, window_size.height,
-                                      window_flags);
+
+    screen->window = glfwCreateWindow(window_size.width, window_size.height, window_title, NULL, NULL);
+
+    const char* description;
     if (!screen->window) {
-        LOGC("Could not create window: %s", SDL_GetError());
+        glfwGetError(&description);
+        LOGC("Could not create window: %s", description);
         return false;
     }
-
-    screen->renderer = SDL_CreateRenderer(screen->window, -1,
-                                          SDL_RENDERER_ACCELERATED);
-    if (!screen->renderer) {
-        LOGC("Could not create renderer: %s", SDL_GetError());
-        screen_destroy(screen);
-        return false;
-    }
-
-    SDL_RendererInfo renderer_info;
-    int r = SDL_GetRendererInfo(screen->renderer, &renderer_info);
-    const char *renderer_name = r ? NULL : renderer_info.name;
-    LOGI("Renderer: %s", renderer_name ? renderer_name : "(unknown)");
-
-    // starts with "opengl"
-    screen->use_opengl = renderer_name && !strncmp(renderer_name, "opengl", 6);
-    if (screen->use_opengl) {
-        struct sc_opengl *gl = &screen->gl;
-        sc_opengl_init(gl);
-
-        LOGI("OpenGL version: %s", gl->version);
-
-        if (mipmaps) {
-            bool supports_mipmaps =
-                sc_opengl_version_at_least(gl, 3, 0, /* OpenGL 3.0+ */
-                                               2, 0  /* OpenGL ES 2.0+ */);
-            if (supports_mipmaps) {
-                LOGI("Trilinear filtering enabled");
-                screen->mipmaps = true;
-            } else {
-                LOGW("Trilinear filtering disabled "
-                     "(OpenGL 3.0+ or ES 2.0+ required)");
-            }
-        } else {
-            LOGI("Trilinear filtering disabled");
-        }
-    } else {
-        LOGD("Trilinear filtering disabled (not an OpenGL renderer)");
-    }
-
-    SDL_Surface *icon = read_xpm(icon_xpm);
-    if (icon) {
-        SDL_SetWindowIcon(screen->window, icon);
-        SDL_FreeSurface(icon);
-    } else {
-        LOGW("Could not load icon");
-    }
-
-    LOGI("Initial texture: %" PRIu16 "x%" PRIu16, frame_size.width,
-                                                  frame_size.height);
-    screen->texture = create_texture(screen);
-    if (!screen->texture) {
-        LOGC("Could not create texture: %s", SDL_GetError());
-        screen_destroy(screen);
-        return false;
-    }
-
-    // Reset the window size to trigger a SIZE_CHANGED event, to workaround
-    // HiDPI issues with some SDL renderers when several displays having
-    // different HiDPI scaling are connected
-    SDL_SetWindowSize(screen->window, window_size.width, window_size.height);
-
-    screen_update_content_rect(screen);
 
     return true;
 }
@@ -411,34 +329,6 @@ screen_set_rotation(struct screen *screen, unsigned rotation) {
     screen_render(screen, true);
 }
 
-// recreate the texture and resize the window if the frame size has changed
-static bool
-prepare_for_frame(struct screen *screen, struct size new_frame_size) {
-    if (screen->frame_size.width != new_frame_size.width
-            || screen->frame_size.height != new_frame_size.height) {
-        // frame dimension changed, destroy texture
-        SDL_DestroyTexture(screen->texture);
-
-        screen->frame_size = new_frame_size;
-
-        struct size new_content_size =
-            get_rotated_size(new_frame_size, screen->rotation);
-        set_content_size(screen, new_content_size);
-
-        screen_update_content_rect(screen);
-
-        LOGI("New texture: %" PRIu16 "x%" PRIu16,
-                     screen->frame_size.width, screen->frame_size.height);
-        screen->texture = create_texture(screen);
-        if (!screen->texture) {
-            LOGC("Could not create texture: %s", SDL_GetError());
-            return false;
-        }
-    }
-
-    return true;
-}
-
 // write the frame into the texture
 static void
 update_texture(struct screen *screen, const AVFrame *frame) {
@@ -453,22 +343,6 @@ update_texture(struct screen *screen, const AVFrame *frame) {
         screen->gl.GenerateMipmap(GL_TEXTURE_2D);
         SDL_GL_UnbindTexture(screen->texture);
     }
-}
-
-bool
-screen_update_frame(struct screen *screen, struct video_buffer *vb) {
-    mutex_lock(vb->mutex);
-    const AVFrame *frame = video_buffer_consume_rendered_frame(vb);
-    struct size new_frame_size = {frame->width, frame->height};
-    if (!prepare_for_frame(screen, new_frame_size)) {
-        mutex_unlock(vb->mutex);
-        return false;
-    }
-    update_texture(screen, frame);
-    mutex_unlock(vb->mutex);
-
-    screen_render(screen, false);
-    return true;
 }
 
 void
