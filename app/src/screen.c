@@ -55,22 +55,17 @@ set_window_size(struct screen *screen, struct size new_size) {
 // get the preferred display bounds (i.e. the screen bounds with some margins)
 static bool
 get_preferred_display_bounds(struct size *bounds) {
-    SDL_Rect rect;
+    int workarea_x, workarea_y, workarea_width, workarea_height;
 
-    // GLFWmonitor** monitors;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
 
-#ifdef SCRCPY_SDL_HAS_GET_DISPLAY_USABLE_BOUNDS
-# define GET_DISPLAY_BOUNDS(i, r) SDL_GetDisplayUsableBounds((i), (r))
-#else
-# define GET_DISPLAY_BOUNDS(i, r) SDL_GetDisplayBounds((i), (r))
-#endif
-    if (GET_DISPLAY_BOUNDS(0, &rect)) {
-        LOGW("Could not get display usable bounds: %s", SDL_GetError());
-        return false;
-    }
+    glfwGetMonitorWorkarea(monitor, &workarea_x, &workarea_y, &workarea_width, &workarea_height);
 
-    bounds->width = MAX(0, rect.w - DISPLAY_MARGINS);
-    bounds->height = MAX(0, rect.h - DISPLAY_MARGINS);
+    LOGW("Monitor work area: %i x %i starting at %i, %i\n",
+            workarea_width, workarea_height, workarea_x, workarea_y);
+
+    bounds->width = MAX(0, workarea_width - DISPLAY_MARGINS);
+    bounds->height = MAX(0, workarea_height - DISPLAY_MARGINS);
 
     return true;
 }
@@ -205,6 +200,33 @@ screen_init(struct screen *screen) {
     *screen = (struct screen) SCREEN_INITIALIZER;
 }
 
+static inline SDL_Texture *
+create_texture(struct screen *screen) {
+    SDL_Renderer *renderer = screen->renderer;
+    struct size size = screen->frame_size;
+    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_YV12,
+                                             SDL_TEXTUREACCESS_STREAMING,
+                                             size.width, size.height);
+    if (!texture) {
+        return NULL;
+    }
+
+    if (screen->mipmaps) {
+        struct sc_opengl *gl = &screen->gl;
+
+        SDL_GL_BindTexture(texture, NULL, NULL);
+
+        // Enable trilinear filtering for downscaling
+        gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                          GL_LINEAR_MIPMAP_LINEAR);
+        // gl->TexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, -1.f);
+
+        SDL_GL_UnbindTexture(texture);
+    }
+
+    return texture;
+}
+
 bool
 screen_init_rendering(struct screen *screen, const char *window_title,
                       struct size frame_size, bool always_on_top,
@@ -250,6 +272,8 @@ screen_init_rendering(struct screen *screen, const char *window_title,
         LOGC("Could not create window: %s", description);
         return false;
     }
+
+    glfwMakeContextCurrent(screen->window);
 
     return true;
 }
@@ -329,6 +353,34 @@ screen_set_rotation(struct screen *screen, unsigned rotation) {
     screen_render(screen, true);
 }
 
+// recreate the texture and resize the window if the frame size has changed
+static bool
+prepare_for_frame(struct screen *screen, struct size new_frame_size) {
+    if (screen->frame_size.width != new_frame_size.width
+            || screen->frame_size.height != new_frame_size.height) {
+        // frame dimension changed, destroy texture
+        SDL_DestroyTexture(screen->texture);
+
+        screen->frame_size = new_frame_size;
+
+        struct size new_content_size =
+            get_rotated_size(new_frame_size, screen->rotation);
+        set_content_size(screen, new_content_size);
+
+        screen_update_content_rect(screen);
+
+        LOGI("New texture: %" PRIu16 "x%" PRIu16,
+                     screen->frame_size.width, screen->frame_size.height);
+        screen->texture = create_texture(screen);
+        if (!screen->texture) {
+            LOGC("Could not create texture: %s", SDL_GetError());
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // write the frame into the texture
 static void
 update_texture(struct screen *screen, const AVFrame *frame) {
@@ -343,6 +395,25 @@ update_texture(struct screen *screen, const AVFrame *frame) {
         screen->gl.GenerateMipmap(GL_TEXTURE_2D);
         SDL_GL_UnbindTexture(screen->texture);
     }
+}
+
+bool
+screen_update_frame(struct screen *screen, struct video_buffer *vb) {
+    mutex_lock(vb->mutex);
+    const AVFrame *frame = video_buffer_consume_rendered_frame(vb);
+    struct size new_frame_size = {frame->width, frame->height};
+    if (!prepare_for_frame(screen, new_frame_size)) {
+        mutex_unlock(vb->mutex);
+        return false;
+    }
+
+    LOGD("screen_update_frame");
+
+    update_texture(screen, frame);
+    mutex_unlock(vb->mutex);
+
+    screen_render(screen, false);
+    return true;
 }
 
 void

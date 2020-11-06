@@ -147,10 +147,14 @@ handle_event(SDL_Event *event, const struct scrcpy_options *options) {
             LOGD("User requested to quit");
             return EVENT_RESULT_STOPPED_BY_USER;
         case EVENT_NEW_FRAME:
+            LOGD("EVENT_NEW_FRAME");
             if (!screen.has_frame) {
                 screen.has_frame = true;
                 // this is the very first frame, show the window
                 screen_show_window(&screen);
+            }
+            if (!screen_update_frame(&screen, &video_buffer)) {
+                return EVENT_RESULT_CONTINUE;
             }
             break;
         case SDL_WINDOWEVENT:
@@ -387,7 +391,7 @@ scrcpy(const struct scrcpy_options *options) {
                                    options->window_y, options->window_width,
                                    options->window_height,
                                    options->window_borderless,
-                                   options->rotation, options-> mipmaps)) {
+                                   options->rotation, options->mipmaps)) {
             goto end;
         }
 
@@ -410,6 +414,8 @@ scrcpy(const struct scrcpy_options *options) {
 
     ret = event_loop(options);
     LOGD("quit...");
+
+    glfwTerminate();
 
     screen_destroy(&screen);
 
