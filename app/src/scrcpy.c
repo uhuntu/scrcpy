@@ -34,6 +34,10 @@
 #include "util/log.h"
 #include "util/net.h"
 
+#define SOKOL_IMPL
+#define SOKOL_GLCORE33
+#include "sokol/sokol_gfx.h"
+
 static struct server server = SERVER_INITIALIZER;
 static struct screen screen = SCREEN_INITIALIZER;
 static struct fps_counter fps_counter;
@@ -84,6 +88,7 @@ glfw_init_and_configure(bool display, const char *render_driver,
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     atexit(glfwTerminate);
@@ -425,112 +430,84 @@ scrcpy(const struct scrcpy_options *options) {
         }
     }
 
-    // build and compile our shader program
-    // ------------------------------------
-    // vertex shader
-    int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
-    // check for shader compile errors
-    int success;
-    char infoLog[512];
-    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-        LOGD("ERROR::SHADER::VERTEX::COMPILATION_FAILED\n%s", infoLog);
-    }
-    // fragment shader
-    int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fragmentShader);
-    // check for shader compile errors
-    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-        LOGD("ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n%s", infoLog);
-    }
-    // link shaders
-    int shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-    // check for linking errors
-    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-    if (!success) {
-        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-        LOGD("ERROR::SHADER::PROGRAM::LINKING_FAILED\n%s", infoLog);
-    }
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
+    /* setup sokol_gfx */
+    sg_setup(&(sg_desc){0});
 
-    // set up vertex data (and buffer(s)) and configure vertex attributes
-    // ------------------------------------------------------------------
-    float vertices[] = {
-        -0.5f, -0.5f, 0.0f, // left
-         0.5f, -0.5f, 0.0f, // right
-         0.0f,  0.5f, 0.0f  // top
+    /* a vertex buffer */
+    const float vertices[] = {
+        // positions            // colors
+         0.0f,  0.5f, 0.5f,     1.0f, 0.0f, 0.0f, 1.0f,
+         0.5f, -0.5f, 0.5f,     0.0f, 1.0f, 0.0f, 1.0f,
+        -0.5f, -0.5f, 0.5f,     0.0f, 0.0f, 1.0f, 1.0f
+    };
+    sg_buffer vbuf = sg_make_buffer(&(sg_buffer_desc){
+        .size = sizeof(vertices),
+        .content = vertices,
+    });
+
+    /* prepare a resource binding struct, only the vertex buffer is needed here */
+    sg_bindings bind = {
+        .vertex_buffers[0] = vbuf
     };
 
-    unsigned int VBO, VAO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    // bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
-    glBindVertexArray(VAO);
+    /* a shader */
+    sg_shader shd = sg_make_shader(&(sg_shader_desc){
+        /* vertex attribute lookup by name is optional in GL3.x, we
+           could also use "layout(location=N)" in the shader
+        */
+        .attrs = {
+            [0].name = "position",
+            [1].name = "color0"
+        },
+        .vs.source =
+            "#version 330\n"
+            "in vec4 position;\n"
+            "in vec4 color0;\n"
+            "out vec4 color;\n"
+            "void main() {\n"
+            "  gl_Position = position;\n"
+            "  color = color0;\n"
+            "}\n",
+        .fs.source =
+            "#version 330\n"
+            "in vec4 color;\n"
+            "out vec4 frag_color;\n"
+            "void main() {\n"
+            "  frag_color = color;\n"
+            "}\n"
+    });
 
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    /* a pipeline state object */
+    sg_pipeline pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = shd,
+        /* if the vertex layout doesn't have gaps, don't need to provide strides and offsets */
+        .layout = {
+            .attrs = {
+                [0].format=SG_VERTEXFORMAT_FLOAT3,
+                [1].format=SG_VERTEXFORMAT_FLOAT4
+            }
+        }
+    });
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+    /* default pass action (clear to grey) */
+    sg_pass_action pass_action = {0};
 
-    // note that this is allowed, the call to glVertexAttribPointer registered VBO as the vertex attribute's bound vertex buffer object so afterwards we can safely unbind
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    // You can unbind the VAO afterwards so other VAO calls won't accidentally modify this VAO, but this rarely happens. Modifying other
-    // VAOs requires a call to glBindVertexArray anyways so we generally don't unbind VAOs (nor VBOs) when it's not directly necessary.
-    glBindVertexArray(0);
-
-    // input_manager_init(&input_manager, options);
-
-    // ret = event_loop(options);
-    // LOGD("quit...");
-
-
-    // uncomment this call to draw in wireframe polygons.
-    //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-
-    // render loop
-    // -----------
-    while (!glfwWindowShouldClose(screen.window))
-    {
-        // input
-        // -----
-        // processInput(window);
-
-        // render
-        // ------
-        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        // draw our first triangle
-        glUseProgram(shaderProgram);
-        glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        // glBindVertexArray(0); // no need to unbind it every time
-
-        // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
-        // -------------------------------------------------------------------------------
+    /* draw loop */
+    while (!glfwWindowShouldClose(screen.window)) {
+        int cur_width, cur_height;
+        glfwGetFramebufferSize(screen.window, &cur_width, &cur_height);
+        sg_begin_default_pass(&pass_action, cur_width, cur_height);
+        sg_apply_pipeline(pip);
+        sg_apply_bindings(&bind);
+        sg_draw(0, 3, 1);
+        sg_end_pass();
+        sg_commit();
         glfwSwapBuffers(screen.window);
         glfwPollEvents();
     }
 
-    // optional: de-allocate all resources once they've outlived their purpose:
-    // ------------------------------------------------------------------------
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteProgram(shaderProgram);
+    /* cleanup */
+    sg_shutdown();
 
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------

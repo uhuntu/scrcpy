@@ -274,15 +274,18 @@ screen_init_rendering(struct screen *screen, const char *window_title,
     }
 
     glfwMakeContextCurrent(screen->window);
-    glfwSetFramebufferSizeCallback(screen->window, framebuffer_size_callback);
+    glfwSwapInterval(1);
+    flextInit();
+
+    // glfwSetFramebufferSizeCallback(screen->window, framebuffer_size_callback);
 
     // glad: load all OpenGL function pointers
     // ---------------------------------------
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-    {
-        LOGC("Failed to initialize GLAD");
-        return -1;
-    }
+    // if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    // {
+    //     LOGC("Failed to initialize GLAD");
+    //     return -1;
+    // }
 
     return true;
 }

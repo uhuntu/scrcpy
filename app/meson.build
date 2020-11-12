@@ -1,6 +1,5 @@
 src = [
     'src/main.c',
-    'src/glad.c',
     'src/cli.c',
     'src/command.c',
     'src/control_msg.c',
@@ -22,7 +21,9 @@ src = [
     'src/tiny_xpm.c',
     'src/video_buffer.c',
     'src/util/net.c',
-    'src/util/str_util.c'
+    'src/util/str_util.c',
+    'src/glad/glad.c',
+    'src/flextgl/flextgl.c'
 ]
 
 if not get_option('crossbuild_windows')
