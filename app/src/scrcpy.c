@@ -37,6 +37,13 @@
 #define SOKOL_IMPL
 #define SOKOL_GLCORE33
 #include "sokol/sokol_gfx.h"
+#include "sokol/sokol_fetch.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb/stb_image.h"
+#undef STB_IMAGE_IMPLEMENTATION
+
+#include "scrcpy.glsl.h"
 
 static struct server server = SERVER_INITIALIZER;
 static struct screen screen = SCREEN_INITIALIZER;
@@ -278,18 +285,57 @@ av_log_callback(void *avcl, int level, const char *fmt, va_list vl) {
     SDL_free(local_fmt);
 }
 
-const char *vertexShaderSource = "#version 330 core\n"
-    "layout (location = 0) in vec3 aPos;\n"
-    "void main()\n"
-    "{\n"
-    "   gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
-    "}\0";
-const char *fragmentShaderSource = "#version 330 core\n"
-    "out vec4 FragColor;\n"
-    "void main()\n"
-    "{\n"
-    "   FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);\n"
-    "}\n\0";
+/* application state */
+static struct {
+    sg_pipeline pip;
+    sg_bindings bind;
+    sg_pass_action pass_action;
+    uint8_t file_buffer[512 * 1024];
+} state;
+
+/* The fetch-callback is called by sokol_fetch.h when the data is loaded,
+   or when an error has occurred.
+*/
+static void fetch_callback(const sfetch_response_t* response) {
+    LOGW("fetch_callback");
+    if (response->fetched) {
+        LOGW("response->fetched");
+        /* the file data has been fetched, since we provided a big-enough
+           buffer we can be sure that all data has been loaded here
+        */
+        int img_width, img_height, num_channels;
+        const int desired_channels = 4;
+        stbi_uc* pixels = stbi_load_from_memory(
+            response->buffer_ptr,
+            (int)response->fetched_size,
+            &img_width, &img_height,
+            &num_channels, desired_channels);
+        if (pixels) {
+            /* initialize the sokol-gfx texture */
+            sg_init_image(state.bind.fs_images[SLOT_ourTexture], &(sg_image_desc){
+                .width = img_width,
+                .height = img_height,
+                /* set pixel_format to RGBA8 for WebGL */
+                .pixel_format = SG_PIXELFORMAT_RGBA8,
+                .wrap_u = SG_WRAP_REPEAT,
+                .wrap_v = SG_WRAP_REPEAT,
+                .min_filter = SG_FILTER_LINEAR,
+                .mag_filter = SG_FILTER_LINEAR,
+                .content.subimage[0][0] = {
+                    .ptr = pixels,
+                    .size = img_width * img_height * 4,
+                }
+            });
+            stbi_image_free(pixels);
+        }
+    }
+    else if (response->failed) {
+        // if loading the file failed, set clear color to red
+        state.pass_action = (sg_pass_action) {
+            .colors[0] = { .action = SG_ACTION_CLEAR, .val = { 1.0f, 0.0f, 0.0f, 1.0f } }
+        };
+    }
+}
 
 bool
 scrcpy(const struct scrcpy_options *options) {
@@ -433,81 +479,96 @@ scrcpy(const struct scrcpy_options *options) {
     /* setup sokol_gfx */
     sg_setup(&(sg_desc){0});
 
-    /* a vertex buffer */
-    const float vertices[] = {
-        // positions            // colors
-         0.0f,  0.5f, 0.5f,     1.0f, 0.0f, 0.0f, 1.0f,
-         0.5f, -0.5f, 0.5f,     0.0f, 1.0f, 0.0f, 1.0f,
-        -0.5f, -0.5f, 0.5f,     0.0f, 0.0f, 1.0f, 1.0f
+     /* setup sokol-fetch */
+    sfetch_setup(&(sfetch_desc_t){
+        .max_requests = 1,
+        .num_channels = 1,
+        .num_lanes = 1
+    });
+
+    /* Allocate an image handle, but don't actually initialize the image yet,
+       this happens later when the asynchronous file load has finished.
+       Any draw calls containing such an "incomplete" image handle
+       will be silently dropped.
+    */
+    state.bind.fs_images[SLOT_ourTexture] = sg_alloc_image();
+
+    float vertices[] = {
+        // positions         // colors           // texture coords
+        0.5f,  0.5f, 0.0f,   1.0f, 0.0f, 0.0f,   1.0f, 1.0f,   // top right
+        0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f,   1.0f, 0.0f,   // bottom right
+        -0.5f, -0.5f, 0.0f,  0.0f, 0.0f, 1.0f,   0.0f, 0.0f,   // bottom left
+        -0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 0.0f,   0.0f, 1.0f    // top left
     };
-    sg_buffer vbuf = sg_make_buffer(&(sg_buffer_desc){
+    state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
         .size = sizeof(vertices),
         .content = vertices,
+        .label = "quad-vertices"
     });
 
-    /* prepare a resource binding struct, only the vertex buffer is needed here */
-    sg_bindings bind = {
-        .vertex_buffers[0] = vbuf
+    /* an index buffer with 2 triangles */
+    uint16_t indices[] = {
+            0, 1, 3,   // first triangle
+            1, 2, 3    // second triangle
     };
-
-    /* a shader */
-    sg_shader shd = sg_make_shader(&(sg_shader_desc){
-        /* vertex attribute lookup by name is optional in GL3.x, we
-           could also use "layout(location=N)" in the shader
-        */
-        .attrs = {
-            [0].name = "position",
-            [1].name = "color0"
-        },
-        .vs.source =
-            "#version 330\n"
-            "in vec4 position;\n"
-            "in vec4 color0;\n"
-            "out vec4 color;\n"
-            "void main() {\n"
-            "  gl_Position = position;\n"
-            "  color = color0;\n"
-            "}\n",
-        .fs.source =
-            "#version 330\n"
-            "in vec4 color;\n"
-            "out vec4 frag_color;\n"
-            "void main() {\n"
-            "  frag_color = color;\n"
-            "}\n"
+    state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
+        .type = SG_BUFFERTYPE_INDEXBUFFER,
+        .size = sizeof(indices),
+        .content = indices,
+        .label = "quad-indices"
     });
 
-    /* a pipeline state object */
-    sg_pipeline pip = sg_make_pipeline(&(sg_pipeline_desc){
+    /* create shader from code-generated sg_shader_desc */
+    sg_shader shd = sg_make_shader(simple_shader_desc());
+
+    /* create a pipeline object (default render states are fine for triangle) */
+    state.pip = sg_make_pipeline(&(sg_pipeline_desc){
         .shader = shd,
+        .index_type = SG_INDEXTYPE_UINT16,
         /* if the vertex layout doesn't have gaps, don't need to provide strides and offsets */
         .layout = {
             .attrs = {
-                [0].format=SG_VERTEXFORMAT_FLOAT3,
-                [1].format=SG_VERTEXFORMAT_FLOAT4
+                [ATTR_vs_position].format = SG_VERTEXFORMAT_FLOAT3,
+                [ATTR_vs_aColor].format = SG_VERTEXFORMAT_FLOAT3,
+                [ATTR_vs_aTexCoord].format = SG_VERTEXFORMAT_FLOAT2
             }
-        }
+        },
+        .label = "triangle-pipeline"
     });
 
-    /* default pass action (clear to grey) */
-    sg_pass_action pass_action = {0};
+    /* a pass action to clear framebuffer */
+    state.pass_action = (sg_pass_action) {
+        .colors[0] = { .action=SG_ACTION_CLEAR, .val={0.2f, 0.3f, 0.3f, 1.0f} }
+    };
+
+    /* start loading the PNG file */
+    sfetch_send(&(sfetch_request_t){
+        .path = "container.jpg",
+        .callback = fetch_callback,
+        .buffer_ptr = state.file_buffer,
+        .buffer_size = sizeof(state.file_buffer)
+    });
 
     /* draw loop */
     while (!glfwWindowShouldClose(screen.window)) {
         int cur_width, cur_height;
         glfwGetFramebufferSize(screen.window, &cur_width, &cur_height);
-        sg_begin_default_pass(&pass_action, cur_width, cur_height);
-        sg_apply_pipeline(pip);
-        sg_apply_bindings(&bind);
-        sg_draw(0, 3, 1);
+
+        sfetch_dowork();
+        sg_begin_default_pass(&state.pass_action, cur_width, cur_height);
+        sg_apply_pipeline(state.pip);
+        sg_apply_bindings(&state.bind);
+        sg_draw(0, 6, 1);
         sg_end_pass();
         sg_commit();
+
         glfwSwapBuffers(screen.window);
         glfwPollEvents();
     }
 
     /* cleanup */
     sg_shutdown();
+    sfetch_shutdown();
 
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
