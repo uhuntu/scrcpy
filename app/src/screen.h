@@ -5,6 +5,7 @@
 #include <SDL2/SDL.h>
 #include <libavformat/avformat.h>
 
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 #include "config.h"

@@ -4,8 +4,6 @@
 #include <string.h>
 #include <SDL2/SDL.h>
 
-#include <GLFW/glfw3.h>
-
 #include "config.h"
 #include "common.h"
 #include "compat.h"
@@ -227,6 +225,8 @@ create_texture(struct screen *screen) {
     return texture;
 }
 
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+
 bool
 screen_init_rendering(struct screen *screen, const char *window_title,
                       struct size frame_size, bool always_on_top,
@@ -274,8 +274,26 @@ screen_init_rendering(struct screen *screen, const char *window_title,
     }
 
     glfwMakeContextCurrent(screen->window);
+    glfwSetFramebufferSizeCallback(screen->window, framebuffer_size_callback);
+
+    // glad: load all OpenGL function pointers
+    // ---------------------------------------
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    {
+        LOGC("Failed to initialize GLAD");
+        return -1;
+    }
 
     return true;
+}
+
+// glfw: whenever the window size changed (by OS or user resize) this callback function executes
+// ---------------------------------------------------------------------------------------------
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+    // make sure the viewport matches the new window dimensions; note that width and
+    // height will be significantly larger than specified on retina displays.
+    glViewport(0, 0, width, height);
 }
 
 void
