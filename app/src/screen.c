@@ -275,7 +275,7 @@ screen_init_rendering(struct screen *screen, const char *window_title,
 
     glfwMakeContextCurrent(screen->window);
     glfwSwapInterval(1);
-    flextInit();
+    // flextInit();
 
     // glfwSetFramebufferSizeCallback(screen->window, framebuffer_size_callback);
 
@@ -409,6 +409,26 @@ update_texture(struct screen *screen, const AVFrame *frame) {
             frame->data[0], frame->linesize[0],
             frame->data[1], frame->linesize[1],
             frame->data[2], frame->linesize[2]);
+
+    // validate_texture(SLOT_tex_y, &frame->y);
+    // validate_texture(SLOT_tex_cb, &frame->cb);
+    // validate_texture(SLOT_tex_cr, &frame->cr);
+
+    /* initialize the sokol-gfx texture */
+    // sg_init_image(state.bind.fs_images[SLOT_ourTexture], &(sg_image_desc){
+    //     .width = img_width,
+    //     .height = img_height,
+    //     /* set pixel_format to RGBA8 for WebGL */
+    //     .pixel_format = SG_PIXELFORMAT_RGBA8,
+    //     .wrap_u = SG_WRAP_REPEAT,
+    //     .wrap_v = SG_WRAP_REPEAT,
+    //     .min_filter = SG_FILTER_LINEAR,
+    //     .mag_filter = SG_FILTER_LINEAR,
+    //     .content.subimage[0][0] = {
+    //         .ptr = pixels,
+    //         .size = img_width * img_height * 4,
+    //     }
+    // });
 
     if (screen->mipmaps) {
         assert(screen->use_opengl);

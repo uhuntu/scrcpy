@@ -290,44 +290,44 @@ struct state state;
 /* The fetch-callback is called by sokol_fetch.h when the data is loaded,
    or when an error has occurred.
 */
-static void fetch_callback(const sfetch_response_t* response) {
-    if (response->fetched) {
-        /* the file data has been fetched, since we provided a big-enough
-           buffer we can be sure that all data has been loaded here
-        */
-        int img_width, img_height, num_channels;
-        const int desired_channels = 4;
-        stbi_uc* pixels = stbi_load_from_memory(
-            response->buffer_ptr,
-            (int)response->fetched_size,
-            &img_width, &img_height,
-            &num_channels, desired_channels);
-        if (pixels) {
-            /* initialize the sokol-gfx texture */
-            sg_init_image(state.bind.fs_images[SLOT_ourTexture], &(sg_image_desc){
-                .width = img_width,
-                .height = img_height,
-                /* set pixel_format to RGBA8 for WebGL */
-                .pixel_format = SG_PIXELFORMAT_RGBA8,
-                .wrap_u = SG_WRAP_REPEAT,
-                .wrap_v = SG_WRAP_REPEAT,
-                .min_filter = SG_FILTER_LINEAR,
-                .mag_filter = SG_FILTER_LINEAR,
-                .content.subimage[0][0] = {
-                    .ptr = pixels,
-                    .size = img_width * img_height * 4,
-                }
-            });
-            stbi_image_free(pixels);
-        }
-    }
-    else if (response->failed) {
-        // if loading the file failed, set clear color to red
-        state.pass_action = (sg_pass_action) {
-            .colors[0] = { .action = SG_ACTION_CLEAR, .val = { 1.0f, 0.0f, 0.0f, 1.0f } }
-        };
-    }
-}
+// static void fetch_callback(const sfetch_response_t* response) {
+//     if (response->fetched) {
+//         /* the file data has been fetched, since we provided a big-enough
+//            buffer we can be sure that all data has been loaded here
+//         */
+//         int img_width, img_height, num_channels;
+//         const int desired_channels = 4;
+//         stbi_uc* pixels = stbi_load_from_memory(
+//             response->buffer_ptr,
+//             (int)response->fetched_size,
+//             &img_width, &img_height,
+//             &num_channels, desired_channels);
+//         if (pixels) {
+//             /* initialize the sokol-gfx texture */
+//             sg_init_image(state.bind.fs_images[SLOT_tex_y], &(sg_image_desc){
+//                 .width = img_width,
+//                 .height = img_height,
+//                 /* set pixel_format to RGBA8 for WebGL */
+//                 .pixel_format = SG_PIXELFORMAT_RGBA8,
+//                 .wrap_u = SG_WRAP_REPEAT,
+//                 .wrap_v = SG_WRAP_REPEAT,
+//                 .min_filter = SG_FILTER_LINEAR,
+//                 .mag_filter = SG_FILTER_LINEAR,
+//                 .content.subimage[0][0] = {
+//                     .ptr = pixels,
+//                     .size = img_width * img_height * 4,
+//                 }
+//             });
+//             stbi_image_free(pixels);
+//         }
+//     }
+//     else if (response->failed) {
+//         // if loading the file failed, set clear color to red
+//         state.pass_action = (sg_pass_action) {
+//             .colors[0] = { .action = SG_ACTION_CLEAR, .val = { 1.0f, 0.0f, 0.0f, 1.0f } }
+//         };
+//     }
+// }
 
 bool
 scrcpy(const struct scrcpy_options *options) {
@@ -468,22 +468,28 @@ scrcpy(const struct scrcpy_options *options) {
         }
     }
 
+    LOGD("here...1");
+
     /* setup sokol_gfx */
     sg_setup(&(sg_desc){0});
 
+    LOGD("here...2");
+
      /* setup sokol-fetch */
-    sfetch_setup(&(sfetch_desc_t){
-        .max_requests = 1,
-        .num_channels = 1,
-        .num_lanes = 1
-    });
+    // sfetch_setup(&(sfetch_desc_t){
+    //     .max_requests = 1,
+    //     .num_channels = 1,
+    //     .num_lanes = 1
+    // });
 
     /* Allocate an image handle, but don't actually initialize the image yet,
        this happens later when the asynchronous file load has finished.
        Any draw calls containing such an "incomplete" image handle
        will be silently dropped.
     */
-    state.bind.fs_images[SLOT_ourTexture] = sg_alloc_image();
+    // state.bind.fs_images[SLOT_tex_y] = sg_alloc_image();
+    // state.bind.fs_images[SLOT_tex_cb] = sg_alloc_image();
+    // state.bind.fs_images[SLOT_tex_cr] = sg_alloc_image();
 
     float vertices[] = {
         // positions         // colors           // texture coords
@@ -511,7 +517,7 @@ scrcpy(const struct scrcpy_options *options) {
     });
 
     /* create shader from code-generated sg_shader_desc */
-    sg_shader shd = sg_make_shader(simple_shader_desc());
+    sg_shader shd = sg_make_shader(scrcpy_shader_desc());
 
     /* create a pipeline object (default render states are fine for triangle) */
     state.pip = sg_make_pipeline(&(sg_pipeline_desc){
@@ -520,9 +526,7 @@ scrcpy(const struct scrcpy_options *options) {
         /* if the vertex layout doesn't have gaps, don't need to provide strides and offsets */
         .layout = {
             .attrs = {
-                [ATTR_vs_position].format = SG_VERTEXFORMAT_FLOAT3,
-                [ATTR_vs_aColor].format = SG_VERTEXFORMAT_FLOAT3,
-                [ATTR_vs_aTexCoord].format = SG_VERTEXFORMAT_FLOAT2
+                [ATTR_vs_vertex].format = SG_VERTEXFORMAT_FLOAT2
             }
         },
         .label = "triangle-pipeline"
@@ -534,12 +538,12 @@ scrcpy(const struct scrcpy_options *options) {
     };
 
     /* start loading the PNG file */
-    sfetch_send(&(sfetch_request_t){
-        .path = "container.jpg",
-        .callback = fetch_callback,
-        .buffer_ptr = state.file_buffer,
-        .buffer_size = sizeof(state.file_buffer)
-    });
+    // sfetch_send(&(sfetch_request_t){
+    //     .path = "container.jpg",
+    //     .callback = fetch_callback,
+    //     .buffer_ptr = state.file_buffer,
+    //     .buffer_size = sizeof(state.file_buffer)
+    // });
 
     screen.state = state;
 
@@ -552,7 +556,7 @@ scrcpy(const struct scrcpy_options *options) {
 
     /* cleanup */
     sg_shutdown();
-    sfetch_shutdown();
+    // sfetch_shutdown();
 
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
