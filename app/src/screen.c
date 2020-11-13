@@ -430,6 +430,20 @@ screen_update_frame(struct screen *screen, struct video_buffer *vb) {
 
     LOGD("screen_update_frame");
 
+    int cur_width, cur_height;
+    glfwGetFramebufferSize(screen->window, &cur_width, &cur_height);
+
+    sfetch_dowork();
+    sg_begin_default_pass(&screen->state.pass_action, cur_width, cur_height);
+    sg_apply_pipeline(screen->state.pip);
+    sg_apply_bindings(&screen->state.bind);
+    sg_draw(0, 6, 1);
+    sg_end_pass();
+    sg_commit();
+
+    glfwSwapBuffers(screen->window);
+    glfwPollEvents();
+
     update_texture(screen, frame);
     mutex_unlock(vb->mutex);
 

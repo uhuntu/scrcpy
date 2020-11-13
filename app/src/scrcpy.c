@@ -13,6 +13,10 @@
 # include <windows.h>
 #endif
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb/stb_image.h"
+#undef STB_IMAGE_IMPLEMENTATION
+
 #include "config.h"
 #include "command.h"
 #include "common.h"
@@ -38,10 +42,6 @@
 #define SOKOL_GLCORE33
 #include "sokol/sokol_gfx.h"
 #include "sokol/sokol_fetch.h"
-
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb/stb_image.h"
-#undef STB_IMAGE_IMPLEMENTATION
 
 #include "scrcpy.glsl.h"
 
@@ -285,21 +285,13 @@ av_log_callback(void *avcl, int level, const char *fmt, va_list vl) {
     SDL_free(local_fmt);
 }
 
-/* application state */
-static struct {
-    sg_pipeline pip;
-    sg_bindings bind;
-    sg_pass_action pass_action;
-    uint8_t file_buffer[512 * 1024];
-} state;
+struct state state;
 
 /* The fetch-callback is called by sokol_fetch.h when the data is loaded,
    or when an error has occurred.
 */
 static void fetch_callback(const sfetch_response_t* response) {
-    LOGW("fetch_callback");
     if (response->fetched) {
-        LOGW("response->fetched");
         /* the file data has been fetched, since we provided a big-enough
            buffer we can be sure that all data has been loaded here
         */
@@ -549,22 +541,14 @@ scrcpy(const struct scrcpy_options *options) {
         .buffer_size = sizeof(state.file_buffer)
     });
 
-    /* draw loop */
-    while (!glfwWindowShouldClose(screen.window)) {
-        int cur_width, cur_height;
-        glfwGetFramebufferSize(screen.window, &cur_width, &cur_height);
+    screen.state = state;
 
-        sfetch_dowork();
-        sg_begin_default_pass(&state.pass_action, cur_width, cur_height);
-        sg_apply_pipeline(state.pip);
-        sg_apply_bindings(&state.bind);
-        sg_draw(0, 6, 1);
-        sg_end_pass();
-        sg_commit();
+    input_manager_init(&input_manager, options);
 
-        glfwSwapBuffers(screen.window);
-        glfwPollEvents();
-    }
+    ret = event_loop(options);
+    LOGD("quit...");
+
+    screen_destroy(&screen);
 
     /* cleanup */
     sg_shutdown();
@@ -573,8 +557,6 @@ scrcpy(const struct scrcpy_options *options) {
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
     glfwTerminate();
-
-    screen_destroy(&screen);
 
 end:
     // stop stream and controller so that they don't continue once their socket

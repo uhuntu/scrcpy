@@ -10,11 +10,23 @@
 #include <GLFW/glfw3.h>
 #include "flextgl/flextGL.h"
 
+// #define SOKOL_IMPL
+#define SOKOL_GLCORE33
+#include "sokol/sokol_gfx.h"
+#include "sokol/sokol_fetch.h"
+
 #include "config.h"
 #include "common.h"
 #include "opengl.h"
 
 struct video_buffer;
+
+struct state {
+    sg_pipeline pip;
+    sg_bindings bind;
+    sg_pass_action pass_action;
+    uint8_t file_buffer[512 * 1024];
+};
 
 struct screen {
     GLFWwindow *window;
@@ -22,6 +34,7 @@ struct screen {
     SDL_Texture *texture;
     bool use_opengl;
     struct sc_opengl gl;
+    struct state state;
     struct size frame_size;
     struct size content_size; // rotated frame_size
 
